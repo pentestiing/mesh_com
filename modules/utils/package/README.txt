@@ -28,7 +28,6 @@ pbkdf              2-1.3
 pyparsing          3.0.9 
 scikit-learn       1.1.1 
 scipy              1.8.1 
-sklearn            0.0 
 threadpoolctl      3.1.0 
 wifi               0.3.8 
 xgboost            1.6.1
