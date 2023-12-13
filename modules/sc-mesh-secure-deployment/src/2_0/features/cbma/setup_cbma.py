@@ -1,3 +1,4 @@
+from typing import List
 from mutauth import *
 from tools.monitoring_wpa import WPAMonitor
 import subprocess
@@ -6,8 +7,44 @@ from tools.utils import batman
 
 
 shutdown_event = threading.Event()
-cbma_threads = []
 file_dir = os.path.dirname(__file__) # Path to dir containing this script
+
+
+########### TEMPORARY - TO BE MOVED LATER ###########
+
+import multiprocessing
+import os
+
+class ProcessManager(object):
+    def __init__(self, function) -> None:
+        self.function = function
+        self.process = None
+
+    def start(self, *args, **kwargs):
+        self.process = multiprocessing.Process(target=self.function, args=args, kwargs=kwargs, daemon=True)
+        self.process.start()
+
+    def join(self) -> None:
+        if self.process is not None and self.process.is_alive():
+            self.process.join()
+
+    def status(self) -> str:
+        if self.process is None:
+            return "Process not started"
+        if self.process.is_alive():
+            return "Process is running"
+        return "Process finished"
+
+    def terminate(self) -> None:
+        if self.process is not None and self.process.is_alive():
+            self.process.terminate()
+        else:
+            print("Process is not running")
+
+
+cbma_processes: List[ProcessManager] = []
+
+#####################################################
 
 
 def setup_macsec(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path = None):
@@ -37,7 +74,12 @@ def setup_macsec(level, interface_name, port, batman_interface, path_to_certific
     monitor_thread.start()
     # Send periodic multicasts
     mua.sender_thread.start()
-    return mua
+
+    try:
+        mua.sender_thread.join()
+    except SystemExit:
+        # TODO - Gracefully handle being killed
+        print("I'm ded")
 
 def cbma(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path=None):
     '''
@@ -51,9 +93,9 @@ def cbma(level, interface_name, port, batman_interface, path_to_certificate, pat
         macsec_encryption: Encryption flag for macsec. "on" or "off"
         wpa_supplicant_control_path: Path to wpa supplicant control (if any)
         '''
-    mutauth_obj = setup_macsec(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path)
-
-    return mutauth_obj
+    process = ProcessManager(setup_macsec)
+    process.start(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path)
+    return process
 
 def main():
     '''
@@ -82,39 +124,29 @@ def main():
 
     # Start cbma lower for each interface/ radio by calling cbma(), which in turn calls setup_macsec(), followed by setup_batman()
     # For example, for wlp1s0:
-    cbma_wlp1s0 = threading.Thread(
-        target=cbma,
-        args=(
-            "lower", # level
-            "wlp1s0", # interface_name
-            15001, # port
-            "bat0", # batman_interface
-            f'{file_dir}/cert_generation/certificates', # path_to_certificate
-            f'{file_dir}/cert_generation/certificates/ca.crt', # path_to_ca
-            "off", # macsec_encryption (can be "on" if required)
-            '/var/run/wpa_supplicant_id0/wlp1s0' # wpa_supplicant_control_path
-        ),
+    cbma_wlp1s0 = cbma(
+        "lower", # level
+        "wlp1s0", # interface_name
+        15001, # port
+        "bat0", # batman_interface
+        f'{file_dir}/cert_generation/certificates', # path_to_certificate
+        f'{file_dir}/cert_generation/certificates/ca.crt', # path_to_ca
+        "off", # macsec_encryption (can be "on" if required)
+        '/var/run/wpa_supplicant_id0/wlp1s0' # wpa_supplicant_control_path
     )
-    cbma_threads.append(cbma_wlp1s0)
-    cbma_wlp1s0.start()
 
     # Similarly, for eth1
-    cbma_eth1 = threading.Thread(
-        target=cbma,
-        args=(
-            "lower",
-            "eth1",
-            15001,
-            "bat0",
-            f'{file_dir}/cert_generation/certificates',
-            f'{file_dir}/cert_generation/certificates/ca.crt',
-            "off",
-            None
-        ),
+    cbma_eth1 = cbma(
+        "lower",
+        "eth1",
+        15001,
+        "bat0",
+        f'{file_dir}/cert_generation/certificates',
+        f'{file_dir}/cert_generation/certificates/ca.crt',
+        "off",
+        None
     )
-    #cbma_eth1 = threading.Thread(target=cbma, args=("lower", "eth1", 15001, "bat0", f'{file_dir}/cert_generation/certificates', f'{file_dir}/cert_generation/certificates/ca.crt', "off", None))
-    cbma_threads.append(cbma_eth1)
-    cbma_eth1.start()
+
     # Repeat the same for other interfaces/ radios by changing the interface_name and wpa_supplicant_control_path (if any). The port number can be reused for the lower level
     # setup_batman will setup bat0 once (for whichever interface this is called first) by setting the mac address of bat0 same as that of the physical interface
     # This is because right now, we reuse certificates from one of the physical interfaces for upper macsec over bat0
@@ -124,28 +156,34 @@ def main():
     # This only needs to be called once
     # path_to_certificates and path_to_ca can be changed as required
     # batman interface = bat1, port number should be different from that used for lower cbma
-    cbma_bat0 = threading.Thread(
-        target=cbma,
-        args=(
-            "upper",
-            "bat0",
-            15002,
-            "bat1",
-            f'{file_dir}/cert_generation/certificates',
-            f'{file_dir}/cert_generation/certificates/ca.crt',
-            "on",
-            None
-        ),
+    cbma_bat0 = cbma(
+        "upper",
+        "bat0",
+        15002,
+        "bat1",
+        f'{file_dir}/cert_generation/certificates',
+        f'{file_dir}/cert_generation/certificates/ca.crt',
+        "on",
+        None
     )
-    cbma_threads.append(cbma_bat0)
-    cbma_bat0.start()
 
-def stop():
-    shutdown_event.set()
-    for cbma_thread in cbma_threads:
-        cbma_thread.join()
-    # Delete macsec links, batman interfaces and bridges created within CBMA
-    subprocess.run([f'{file_dir}/cleanup_cbma.sh'])
+    global cbma_processes
+    cbma_processes = [cbma_wlp1s0, cbma_eth1, cbma_bat0]
+
+    cbma_bat0.join()
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except (Exception, KeyboardInterrupt):
+        print("Whoopsie...", flush=True)
+        shutdown_event.set()
+
+        for p in cbma_processes:
+            p.terminate()
+
+        print("Cleaning up")
+        # TODO - The cleanup process shall not delete bat interfaces
+        subprocess.run([f'{file_dir}/cleanup_cbma.sh'])
+
+        print("Exiting")
