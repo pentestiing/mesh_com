@@ -73,11 +73,11 @@ class AuthServer:
             else:
                 # Handle the case when authentication fails, maybe send an error message
                 self.mua.auth_fail(client_mac=client_mac)
+                secure_client_socket.close()
                 # secure_client_socket.sendall(b"Authentication failed.")
         except Exception as e:
             logger.error(f"An error occurred while handling the client {client_address[0]}.", exc_info=True)
             self.mua.auth_fail(client_mac=client_mac)
-        finally:
             secure_client_socket.close()
 
     def get_secure_socket(self, client_address):
