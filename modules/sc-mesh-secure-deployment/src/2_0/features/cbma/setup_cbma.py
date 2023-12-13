@@ -1,11 +1,14 @@
 from mutauth import *
 from tools.monitoring_wpa import WPAMonitor
-import argparse
 import subprocess
+
+from tools.utils import batman
+
 
 shutdown_event = threading.Event()
 cbma_threads = []
 file_dir = os.path.dirname(__file__) # Path to dir containing this script
+
 
 def setup_macsec(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path = None):
     '''
@@ -49,7 +52,7 @@ def cbma(level, interface_name, port, batman_interface, path_to_certificate, pat
         wpa_supplicant_control_path: Path to wpa supplicant control (if any)
         '''
     mutauth_obj = setup_macsec(level, interface_name, port, batman_interface, path_to_certificate, path_to_ca, macsec_encryption, wpa_supplicant_control_path)
-    mutauth_obj.setup_batman()
+
     return mutauth_obj
 
 def main():
@@ -71,6 +74,11 @@ def main():
     # Apply firewall rules that only allows macsec traffic and cbma configuration traffic
     # TODO: nft needs to be enabled on the images
     #apply_nft_rules(rules_file=f'{file_dir}/tools/firewall.nft')
+
+
+    # TODO - This step is performed by the comms controller
+    batman("bat0")
+    batman("bat1")
 
     # Start cbma lower for each interface/ radio by calling cbma(), which in turn calls setup_macsec(), followed by setup_batman()
     # For example, for wlp1s0:

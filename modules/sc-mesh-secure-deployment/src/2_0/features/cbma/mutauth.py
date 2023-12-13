@@ -46,7 +46,6 @@ class mutAuth():
         self.connected_peers_status_lock = threading.Lock()
         self.maximum_num_failed_attempts = 3 # Maximum number of failed attempts for mutual authentication (can be changed)
         self.lan_bridge_flag = lan_bridge_flag
-        self.macsec_setup_event = threading.Event()
 
     def check_mesh(self):
         if not is_wpa_supplicant_running():
@@ -122,12 +121,6 @@ class mutAuth():
         with self.connected_peers_status_lock:
             self.connected_peers_status[client_mac][1] = self.connected_peers_status[client_mac][1] + 1  # Increment number of failed attempt by 1
             self.connected_peers_status[client_mac][0] = "not connected"  # Update status as not connected
-    def batman(self, batman_interface):
-        try:
-            batman_exec(batman_interface,"batman-adv")
-        except Exception as e:
-            logger.error(f'Error setting up bat0: {e}')
-            sys.exit(1)
 
     def setup_secchannel(self, secure_client_socket, my_macsec_param):
         # Establish secure channel and exchange macsec key
@@ -158,7 +151,6 @@ class mutAuth():
         self.macsec_obj.set_macsec_tx(client_mac, my_macsec_key, my_port) # setup macsec tx channel
         self.macsec_obj.set_macsec_rx(client_mac, client_macsec_key, client_macsec_param['port'])  # setup macsec rx channel
         self.add_to_batman(client_mac)
-        self.macsec_setup_event.set()
 
     def add_to_batman(self, client_mac):
         # Adds macsec interface to batman
@@ -169,29 +161,6 @@ class mutAuth():
         elif self.level == "upper":
             add_interface_to_bridge(interface_to_add=self.macsec_obj.get_macsec_interface_name(client_mac), bridge_interface=self.bridge_interface)
             # setup_ebtables_macsec(interface=self.macsec_obj.get_macsec_interface_name(client_mac), mac=client_mac)
-
-    def setup_batman(self):
-        # Wait till a macsec interface is setup and added to batman before setting up batman interface
-        self.macsec_setup_event.wait()
-        if not is_interface_up(self.batman_interface): # Turn batman interface up if not up already
-            self.batman(self.batman_interface)
-            if self.level == "upper" and self.lan_bridge_flag:
-                # Add bat1 and ethernet interface to br-lan to connect external devices
-                bridge_interface = "br-lan"
-                if not is_interface_up(bridge_interface):
-                    self.setup_bridge_over_batman(bridge_interface)
-
-    def setup_bridge_over_batman(self, bridge_interface):
-        # TODO: Need to configure interfaces to add to br-lan (This is just for quick test)
-        subprocess.run(["brctl", "addbr", bridge_interface], check=True)
-        add_interface_to_bridge(interface_to_add=self.batman_interface, bridge_interface=bridge_interface) # Add bat1 to br-lan
-        add_interface_to_bridge(interface_to_add="eth1", bridge_interface=bridge_interface)  # Add eth1 to br-lan
-        logger.info(f"Setting mac address of {bridge_interface} to be same as {self.batman_interface}..")
-        subprocess.run(["ip", "link", "set", "dev", bridge_interface, "address", get_mac_addr(self.batman_interface)], check=True)
-        subprocess.run(["ip", "link", "set", bridge_interface, "up"], check=True)
-        subprocess.run(["ifconfig", bridge_interface], check=True)
-
-
 
     def start(self):
         # ... other starting procedures
